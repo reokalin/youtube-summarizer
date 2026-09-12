@@ -27,10 +27,10 @@ def is_processed(service, video_id):
 def summarize_video(video_id, title, author, service):
     clean_url = f"https://www.youtube.com/watch?v={video_id}"
     print(f"処理開始: {title} ({clean_url})")
-
+    
     jst = timezone(timedelta(hours=+9), 'JST')
     today_str = datetime.now(jst).strftime("%Y%m%d")
-
+    
     safe_title = re.sub(r'[\\/*?:"<>|]', '', title)
     safe_author = re.sub(r'[\\/*?:"<>|]', '', author)
     file_name = f"{today_str}_{safe_author}_{safe_title}_[{video_id}].txt"
@@ -66,10 +66,12 @@ def summarize_video(video_id, title, author, service):
     try:
         if transcript_text:
             prompt += f"\n\n【文字起こしテキスト】\n{transcript_text[:30000]}"
-            response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
+            # gemini-1.5-flashに変更
+            response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
         else:
+            # gemini-1.5-flashに変更
             response = client.models.generate_content(
-                model='gemini-3.6-flash',
+                model='gemini-1.5-flash',
                 contents=[{"file_data": {"file_uri": clean_url, "mime_type": "video/mp4"}}, prompt]
             )
         summary_result = response.text
@@ -93,26 +95,26 @@ def main():
     if not os.path.exists("channels.txt"):
         print("channels.txt が見つかりません。")
         return
-
+        
     with open("channels.txt", "r") as f:
         channel_ids = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-
+        
     print(f"計 {len(channel_ids)} チャンネルのチェックを開始します。")
-
+    
     for cid in channel_ids:
         rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}"
         feed = feedparser.parse(rss_url)
-
+        
         if not feed.entries:
             continue
-
+            
         channel_name = feed.feed.get('title', 'Unknown Channel')
         print(f"\n■ {channel_name} の最新動画をチェック中...")
-
+        
         for entry in feed.entries[:2]:
             video_id = entry.yt_videoid
             title = entry.title
-
+            
             if is_processed(service, video_id):
                 print(f"  - スキップ（処理済）: {title}")
             else:
