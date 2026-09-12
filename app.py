@@ -50,12 +50,12 @@ if st.button("要約してGoogleドライブへ保存", type="primary", use_cont
         if not video_id:
             st.error("有効なYouTube URLではありません。")
         else:
-            # 1. 字幕取得
+            # 1. 字幕取得（正しい API 呼出構文）
             with st.spinner("1. 動画の字幕・文字起こしデータを取得中..."):
                 transcript_text = ""
                 try:
-                    # 日本語または英語の字幕を取得
-                    fetched = YouTubeTranscriptApi.get_transcript(video_id, languages=['ja', 'en'])
+                    yt_api = YouTubeTranscriptApi()
+                    fetched = yt_api.fetch(video_id, languages=['ja', 'en'])
                     formatter = TextFormatter()
                     transcript_text = formatter.format_transcript(fetched)
                 except Exception as e:
