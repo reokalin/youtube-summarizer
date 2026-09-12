@@ -66,10 +66,8 @@ def summarize_video(video_id, title, author, service):
     try:
         if transcript_text:
             prompt += f"\n\n【文字起こしテキスト】\n{transcript_text[:30000]}"
-            # gemini-1.5-flashに変更
             response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
         else:
-            # gemini-1.5-flashに変更
             response = client.models.generate_content(
                 model='gemini-1.5-flash',
                 contents=[{"file_data": {"file_uri": clean_url, "mime_type": "video/mp4"}}, prompt]
