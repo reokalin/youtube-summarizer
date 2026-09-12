@@ -12,7 +12,7 @@ from googleapiclient.http import MediaInMemoryUpload
 st.set_page_config(page_title="YouTube Summarizer", page_icon="🎬", layout="centered")
 
 st.title("🎬 YouTube AI Summarizer")
-st.caption("URLを入力すると、Gemini 3.6が要約してGoogleドライブへ直接保存します。")
+st.caption("URLを入力すると、Gemini 3.6が動画コンテンツ（字幕または直接解析）を読み取って要約し、Googleドライブへ保存します。")
 
 # Secrets情報の読み込み
 try:
@@ -50,28 +50,32 @@ if st.button("要約してGoogleドライブへ保存", type="primary", use_cont
         if not video_id:
             st.error("有効なYouTube URLではありません。")
         else:
-            # 1. 字幕取得（正しい API 呼出構文）
-            with st.spinner("1. 動画の字幕・文字起こしデータを取得中..."):
-                transcript_text = ""
+            clean_url = f"https://www.youtube.com/watch?v={video_id}"
+            transcript_text = None
+
+            # 1. 字幕取得を試行
+            with st.spinner("1. 動画の字幕データを取得中..."):
                 try:
                     yt_api = YouTubeTranscriptApi()
                     fetched = yt_api.fetch(video_id, languages=['ja', 'en'])
                     formatter = TextFormatter()
                     transcript_text = formatter.format_transcript(fetched)
-                except Exception as e:
-                    st.error(f"字幕データの取得に失敗しました。字幕が無効な動画の可能性があります: {e}")
-                    st.stop()
+                    st.info("💡 字幕データの自動取得に成功しました。")
+                except Exception:
+                    st.info("ℹ️ 字幕が非対応のため、Geminiの動画直接解析に切り替えます...")
 
-            # 2. Gemini要約
-            with st.spinner("2. Gemini 3.6 が文字起こしテキストを解析中..."):
+            # 2. Gemini 3.6要約処理
+            with st.spinner("2. Gemini 3.6 で要約を作成中..."):
                 try:
                     client = genai.Client(api_key=GEMINI_API_KEY)
                     
-                    prompt = f"""
+                    if transcript_text:
+                        # 字幕が取れた場合
+                        prompt = f"""
 以下のYouTube動画の文字起こしテキストを読み、わかりやすく要約してください。
 
 【対象動画URL】
-https://www.youtube.com/watch?v={video_id}
+{clean_url}
 
 【文字起こしテキスト】
 {transcript_text[:30000]}
@@ -88,10 +92,39 @@ https://www.youtube.com/watch?v={video_id}
 
 ■ 詳細まとめ・結論
 """
-                    response = client.models.generate_content(
-                        model='gemini-3.6-flash',
-                        contents=prompt
-                    )
+                        response = client.models.generate_content(
+                            model='gemini-3.6-flash',
+                            contents=prompt
+                        )
+                    else:
+                        # 字幕がない場合：GeminiのDirect URL / Part解析
+                        prompt = f"""
+以下のYouTube動画のコンテンツを正確に読み取り、要約を作成してください。
+
+【対象動画URL】
+{clean_url}
+
+【出力フォーマット】
+■ 動画概要（3行で要約）
+・
+・
+・
+
+■ 主なキーポイント・要点
+・
+・
+
+■ 詳細まとめ・結論
+"""
+                        # Direct URL パートオブジェクトとして渡す
+                        response = client.models.generate_content(
+                            model='gemini-3.6-flash',
+                            contents=[
+                                {"file_data": {"file_uri": clean_url, "mime_type": "video/mp4"}},
+                                prompt
+                            ]
+                        )
+                    
                     summary_result = response.text
                 except Exception as e:
                     st.error(f"Gemini API 解析エラー: {e}")
@@ -102,7 +135,7 @@ https://www.youtube.com/watch?v={video_id}
                 try:
                     service = get_drive_service()
                     file_name = f"summary_{video_id}.txt"
-                    file_content = f"URL: https://www.youtube.com/watch?v={video_id}\n\n====================\n【AI要約結果】\n====================\n\n{summary_result}"
+                    file_content = f"URL: {clean_url}\n\n====================\n【AI要約結果】\n====================\n\n{summary_result}"
 
                     file_metadata = {
                         'name': file_name,
