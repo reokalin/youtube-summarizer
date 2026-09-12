@@ -79,7 +79,7 @@ def get_video_metadata(video_url):
     except Exception:
         return "動画タイトル不明", "チャンネル不明"
 
-# RSS経由でチャンネル名を高速取得（1日1回だけ再取得するようにキャッシュ化）
+# RSS経由でチャンネル名を高速取得（キャッシュ化）
 @st.cache_data(ttl=86400)
 def get_ordered_channels():
     channel_names = []
@@ -100,7 +100,6 @@ def get_ordered_channels():
     return channel_names
 
 def get_recent_files(service, max_results=300):
-    """ドライブから最新のテキストファイルを取得（300件に拡張）"""
     query = f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false and mimeType='text/plain'"
     results = service.files().list(
         q=query,
@@ -112,7 +111,6 @@ def get_recent_files(service, max_results=300):
     return results.get('files', [])
 
 def read_file_content(service, file_id):
-    """ファイルの内容を読み込む"""
     request = service.files().get_media(fileId=file_id)
     return request.execute().decode('utf-8')
 
@@ -214,30 +212,56 @@ with tab1:
 with tab2:
     st.markdown("### 📺 チャンネルを選択")
     
-    # チャンネルリストの取得とボタン生成
-    base_channels = get_ordered_channels()
-    display_channels = base_channels + ["その他（手動要約など）"] if base_channels else ["その他（手動要約など）"]
-    
-    # セッション（選択状態）の初期化
-    if "selected_channel" not in st.session_state:
-        st.session_state.selected_channel = display_channels[0]
-        
-    # スマホで見やすいように2列でボタンを並べる
-    cols = st.columns(2)
-    for i, ch in enumerate(display_channels):
-        with cols[i % 2]:
-            is_selected = (ch == st.session_state.selected_channel)
-            b_type = "primary" if is_selected else "secondary"
-            if st.button(ch, key=f"btn_{i}", use_container_width=True, type=b_type):
-                st.session_state.selected_channel = ch
-                st.rerun()
-
-    current_ch = st.session_state.selected_channel
-    st.divider()
-    
     try:
         service = get_drive_service()
+        # まずドライブからファイルを全取得
         files = get_recent_files(service, max_results=300)
+        
+        # チャンネルリストの取得
+        base_channels = get_ordered_channels()
+        display_channels = base_channels + ["その他（手動要約など）"] if base_channels else ["その他（手動要約など）"]
+        
+        # --- NEWバッジ判定（過去24時間以内の更新があるか） ---
+        now_utc = datetime.now(timezone.utc)
+        new_threshold = now_utc - timedelta(hours=24)
+        
+        channel_has_new = {ch: False for ch in display_channels}
+        
+        for f in files:
+            if 'createdTime' in f:
+                # DriveAPIの日付(UTC)を変換
+                created_time = datetime.fromisoformat(f['createdTime'].replace("Z", "+00:00"))
+                if created_time >= new_threshold:
+                    # このファイルは新しい！ どのチャンネルのものか判定
+                    is_other = True
+                    for bc in base_channels:
+                        if f"_{bc}_" in f['name']:
+                            channel_has_new[bc] = True
+                            is_other = False
+                            break
+                    if is_other:
+                        channel_has_new["その他（手動要約など）"] = True
+        
+        # セッション（選択状態）の初期化
+        if "selected_channel" not in st.session_state:
+            st.session_state.selected_channel = display_channels[0]
+            
+        # ボタンを2列で並べる
+        cols = st.columns(2)
+        for i, ch in enumerate(display_channels):
+            with cols[i % 2]:
+                # NEWバッジの追加
+                btn_label = f"🆕 {ch}" if channel_has_new[ch] else ch
+                
+                is_selected = (ch == st.session_state.selected_channel)
+                b_type = "primary" if is_selected else "secondary"
+                
+                if st.button(btn_label, key=f"btn_{i}", use_container_width=True, type=b_type):
+                    st.session_state.selected_channel = ch
+                    st.rerun()
+
+        current_ch = st.session_state.selected_channel
+        st.divider()
         
         if not files:
             st.info("ドライブに保存された要約がまだありません。")
@@ -260,12 +284,29 @@ with tab2:
                 st.info(f"「{current_ch}」の要約はまだありません。")
             else:
                 st.markdown(f"#### 📄 「{current_ch}」の要約一覧")
-                file_options = {f['name'].split('_', 2)[-1].replace('.txt', ''): f['id'] for f in target_files}
+                # セレクトボックス用の辞書
+                file_options = {f['name'].split('_', 2)[-1].replace('.txt', ''): f for f in target_files}
                 
-                selected_file_name = st.selectbox("確認したい動画を選択してください", list(file_options.keys()))
+                selected_label = st.selectbox("確認したい動画を選択してください", list(file_options.keys()))
                 
-                if selected_file_name:
-                    file_id = file_options[selected_file_name]
+                if selected_label:
+                    selected_file = file_options[selected_label]
+                    file_id = selected_file['id']
+                    file_name = selected_file['name']
+                    
+                    # --- 動画のURLを抽出してボタンを配置 ---
+                    st.write("") # 少し余白
+                    match = re.search(r'\[([a-zA-Z0-9_-]{11})\]\.txt$', file_name)
+                    if match:
+                        vid = match.group(1)
+                        video_url = f"https://www.youtube.com/watch?v={vid}"
+                        # ここにリンクボタンを表示
+                        st.link_button("▶️ YouTubeアプリでこの動画を開く", video_url, use_container_width=True)
+                    else:
+                        # 抽出できなかった場合の予備（ほぼ起きない）
+                        st.warning("動画のURLリンクが生成できませんでした。")
+                    st.write("") # 少し余白
+                    
                     with st.spinner("要約内容を読み込み中..."):
                         content = read_file_content(service, file_id)
                     
