@@ -67,11 +67,11 @@ def summarize_video(video_id, title, author, service):
         if transcript_text:
             prompt += f"\n\n【文字起こしテキスト】\n{transcript_text[:30000]}"
             # 正しいモデル名は gemini-1.5-flash です（1日1500回無料）
-            response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
+            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
         else:
             # YouTubeのURLを直接動画ファイルとして渡すとエラーになるバグを修正
             fallback_prompt = prompt + "\n\n※この動画には字幕データがありません。上記URLやタイトルから読み取れる範囲で要約してください。"
-            response = client.models.generate_content(model='gemini-1.5-flash', contents=fallback_prompt)
+            response = client.models.generate_content(model='gemini-2.5-flash', contents=fallback_prompt)
             
         summary_result = response.text
     except Exception as e:
