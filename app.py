@@ -74,7 +74,6 @@ def get_video_metadata(video_url):
     try:
         with urllib.request.urlopen(oembed_url) as response:
             data = json.loads(response.read().decode('utf-8'))
-            # ファイル名に使えない記号（\ / : * ? " < > |）を削除・置換
             title = re.sub(r'[\\/*?:"<>|]', '', data.get("title", "不明な動画"))
             author = re.sub(r'[\\/*?:"<>|]', '', data.get("author_name", "不明なチャンネル"))
             return title, author
@@ -95,18 +94,15 @@ if st.button("🚀 要約してGoogleドライブへ保存", type="primary", use
             clean_url = f"https://www.youtube.com/watch?v={video_id}"
             transcript_text = None
 
-            # --- プログレス表示用のプレースホルダー ---
             status_text = st.empty()
             
-            # メタデータ（タイトル・チャンネル名）取得とファイル名生成
+            # メタデータ取得とファイル名生成
             status_text.info("🔍 動画の情報を取得中...")
             title, author = get_video_metadata(clean_url)
             
-            # 日本時間(JST)で日付を取得
             jst = timezone(timedelta(hours=+9), 'JST')
             today_str = datetime.now(jst).strftime("%Y%m%d")
-            # 指定されたファイル名の規則
-            file_name = f"{today_str}_{author}_{title}.txt"
+            file_name = f"{today_str}_{author}_{title}_[{video_id}].txt"
 
             # 1. 字幕取得
             status_text.info("📝 動画のテキストデータを取得中...")
@@ -116,14 +112,13 @@ if st.button("🚀 要約してGoogleドライブへ保存", type="primary", use
                 formatter = TextFormatter()
                 transcript_text = formatter.format_transcript(fetched)
             except Exception:
-                pass # 字幕なしの場合はGeminiの直接解析に任せる
+                pass 
 
-            # 2. Gemini要約
-            status_text.info("🧠 Gemini 3.6 が内容を解析・要約中...")
+            # 2. Gemini要約 (gemini-1.5-flash に統一)
+            status_text.info("🧠 Gemini 1.5 Flash が内容を解析・要約中...")
             try:
                 client = genai.Client(api_key=GEMINI_API_KEY)
                 
-                # 企業名の箇条書きを加えたプロンプト
                 prompt = f"""
 以下のYouTube動画のコンテンツを正確に読み取り、わかりやすく要約してください。
 
@@ -152,12 +147,12 @@ if st.button("🚀 要約してGoogleドライブへ保存", type="primary", use
                 if transcript_text:
                     prompt += f"\n\n【文字起こしテキスト】\n{transcript_text[:30000]}"
                     response = client.models.generate_content(
-                        model='gemini-3.6-flash',
+                        model='gemini-1.5-flash',
                         contents=prompt
                     )
                 else:
                     response = client.models.generate_content(
-                        model='gemini-3.6-flash',
+                        model='gemini-1.5-flash',
                         contents=[
                             {"file_data": {"file_uri": clean_url, "mime_type": "video/mp4"}},
                             prompt
