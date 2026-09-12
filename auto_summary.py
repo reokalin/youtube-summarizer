@@ -66,12 +66,11 @@ def summarize_video(video_id, title, author, service):
     try:
         if transcript_text:
             prompt += f"\n\n【文字起こしテキスト】\n{transcript_text[:30000]}"
-            # 正しいモデル名は gemini-1.5-flash です（1日1500回無料）
-            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            # 必須指定の gemini-3.6-flash を使用
+            response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
         else:
-            # YouTubeのURLを直接動画ファイルとして渡すとエラーになるバグを修正
             fallback_prompt = prompt + "\n\n※この動画には字幕データがありません。上記URLやタイトルから読み取れる範囲で要約してください。"
-            response = client.models.generate_content(model='gemini-2.5-flash', contents=fallback_prompt)
+            response = client.models.generate_content(model='gemini-3.6-flash', contents=fallback_prompt)
             
         summary_result = response.text
     except Exception as e:
@@ -110,7 +109,8 @@ def main():
         channel_name = feed.feed.get('title', 'Unknown Channel')
         print(f"\n■ {channel_name} の最新動画をチェック中...")
         
-        for entry in feed.entries[:2]:
+        # 1日20回の制限（free tier）に引っかからないよう、各チャンネル最新1件（[:1]）に制限
+        for entry in feed.entries[:1]:
             video_id = entry.yt_videoid
             title = entry.title
             
@@ -119,7 +119,7 @@ def main():
             else:
                 print(f"  - 🌟 新着動画発見！")
                 summarize_video(video_id, title, channel_name, service)
-                time.sleep(10)
+                time.sleep(15) # レートリミット回避のウェイト
 
 if __name__ == "__main__":
     main()
