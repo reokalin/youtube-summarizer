@@ -3,8 +3,6 @@ import re
 import json
 import tempfile
 import streamlit as st
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api.formatters import TextFormatter
 from google import genai
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
@@ -13,7 +11,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 st.set_page_config(page_title="YouTube Summarizer", page_icon="🎬", layout="centered")
 
 st.title("🎬 YouTube AI Summarizer")
-st.caption("URLを入力すると、Gemini 3.6が要約してGoogleドライブへ直接保存します。")
+st.caption("URLを入力すると、Gemini 3.6が動画を直接解析して要約し、Googleドライブへ保存します。")
 
 # Secrets情報の読み込み
 try:
@@ -21,7 +19,7 @@ try:
     GOOGLE_DRIVE_FOLDER_ID = st.secrets["GOOGLE_DRIVE_FOLDER_ID"]
     SA_JSON_STR = st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"]
 except Exception as e:
-    st.error("設定情報（Secrets）が見つかりません。設定を行ってください。")
+    st.error("設定情報（Secrets）が見つかりません。Streamlitの設定を行ってください。")
     st.stop()
 
 def get_drive_instance():
@@ -38,48 +36,61 @@ def get_drive_instance():
     gauth.credentials = ServiceAccountCredentials.from_json_keyfile_name(temp_json_path, scope)
     return GoogleDrive(gauth)
 
-def extract_video_id(url):
+def clean_youtube_url(url):
+    # ショート動画や通常の動画URLから純粋な動画URLを抽出
     match = re.search(r'(?:v=|\/|shorts\/)([0-9A-Za-z_-]{11})', url)
-    return match.group(1) if match else None
+    if match:
+        video_id = match.group(1)
+        return video_id, f"https://www.youtube.com/watch?v={video_id}"
+    return None, None
 
-video_url = st.text_input("YouTube動画URLを入力", placeholder="https://www.youtube.com/watch?v=...")
+video_url_input = st.text_input("YouTube動画URLを入力", placeholder="https://www.youtube.com/watch?v=...")
 
 if st.button("要約してGoogleドライブへ保存", type="primary", use_container_width=True):
-    if not video_url:
+    if not video_url_input:
         st.warning("URLを入力してください。")
     else:
-        video_id = extract_video_id(video_url)
+        video_id, clean_url = clean_youtube_url(video_url_input)
         if not video_id:
             st.error("有効なYouTube URLではありません。")
         else:
-            with st.spinner("1. 字幕データを取得中..."):
-                try:
-                    api = YouTubeTranscriptApi()
-                    fetched = api.fetch(video_id, languages=['ja', 'en'])
-                    formatter = TextFormatter()
-                    transcript_text = formatter.format_transcript(fetched)
-                except Exception as e:
-                    st.error(f"字幕の取得に失敗しました: {e}")
-                    st.stop()
-
-            with st.spinner("2. Gemini 3.6 で要約を作成中..."):
+            with st.spinner("1. Gemini 3.6 が動画コンテンツを直接解析中..."):
                 try:
                     client = genai.Client(api_key=GEMINI_API_KEY)
-                    prompt = f"以下のYouTube動画の文字起こしテキストを読み、構造化してわかりやすく要約してください。\n\n【文字起こし】\n{transcript_text[:30000]}"
+                    
+                    # Geminiに直接YouTube URLを渡して要約させるプロンプト
+                    prompt = f"""
+以下のYouTube動画のコンテンツ（音声・字幕・映像）を正確に理解し、わかりやすく要約してください。
+
+【対象動画URL】
+{clean_url}
+
+【出力フォーマット】
+■ 動画概要（3行で要約）
+・
+・
+・
+
+■ 主なキーポイント・要点
+・
+・
+
+■ 詳細まとめ・結論
+"""
                     response = client.models.generate_content(
                         model='gemini-3.6-flash',
                         contents=prompt
                     )
                     summary_result = response.text
                 except Exception as e:
-                    st.error(f"Gemini API エラー: {e}")
+                    st.error(f"Gemini API 解析エラー: {e}")
                     st.stop()
 
-            with st.spinner("3. Googleドライブへ保存中..."):
+            with st.spinner("2. Googleドライブへ保存中..."):
                 try:
                     drive = get_drive_instance()
                     file_name = f"summary_{video_id}.txt"
-                    file_content = f"URL: {video_url}\n\n====================\n【AI要約結果】\n====================\n\n{summary_result}"
+                    file_content = f"URL: {clean_url}\n\n====================\n【AI要約結果】\n====================\n\n{summary_result}"
 
                     file_metadata = {
                         'title': file_name,
