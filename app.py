@@ -4,6 +4,7 @@ import json
 import urllib.request
 from datetime import datetime, timedelta, timezone
 import streamlit as st
+import feedparser
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import TextFormatter
 from google import genai
@@ -25,7 +26,7 @@ st.markdown("""
     }
     .stButton>button {
         height: 3.5rem;
-        font-size: 1.1rem;
+        font-size: 1rem;
         font-weight: bold;
         border-radius: 8px;
     }
@@ -78,8 +79,28 @@ def get_video_metadata(video_url):
     except Exception:
         return "動画タイトル不明", "チャンネル不明"
 
-def get_recent_files(service, max_results=15):
-    """ドライブから最新のテキストファイルを取得"""
+# RSS経由でチャンネル名を高速取得（1日1回だけ再取得するようにキャッシュ化）
+@st.cache_data(ttl=86400)
+def get_ordered_channels():
+    channel_names = []
+    if os.path.exists("channels.txt"):
+        with open("channels.txt", "r") as f:
+            cids = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        for cid in cids:
+            try:
+                rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}"
+                feed = feedparser.parse(rss_url)
+                if feed.entries:
+                    name = feed.feed.get('title', 'Unknown Channel')
+                    safe_name = re.sub(r'[\\/*?:"<>|]', '', name)
+                    if safe_name not in channel_names:
+                        channel_names.append(safe_name)
+            except Exception:
+                pass
+    return channel_names
+
+def get_recent_files(service, max_results=300):
+    """ドライブから最新のテキストファイルを取得（300件に拡張）"""
     query = f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false and mimeType='text/plain'"
     results = service.files().list(
         q=query,
@@ -98,7 +119,7 @@ def read_file_content(service, file_id):
 # ----------------------------
 # 画面レイアウト（タブ切り替え）
 # ----------------------------
-tab1, tab2 = st.tabs(["🚀 手動で要約", "📂 自動保存の履歴（確認）"])
+tab1, tab2 = st.tabs(["🚀 手動で要約", "📂 保存済みの要約履歴"])
 
 # ==========================================
 # タブ1：手動実行画面
@@ -191,32 +212,64 @@ with tab1:
 # タブ2：自動・手動保存の履歴確認画面
 # ==========================================
 with tab2:
-    st.markdown("### ドライブに保存された最新の要約")
-    st.caption("GitHub Actions（自動）や手動で保存した最近の要約（最新15件）を確認できます。")
+    st.markdown("### 📺 チャンネルを選択")
     
-    if st.button("🔄 履歴を更新", use_container_width=True):
-        st.rerun()
+    # チャンネルリストの取得とボタン生成
+    base_channels = get_ordered_channels()
+    display_channels = base_channels + ["その他（手動要約など）"] if base_channels else ["その他（手動要約など）"]
+    
+    # セッション（選択状態）の初期化
+    if "selected_channel" not in st.session_state:
+        st.session_state.selected_channel = display_channels[0]
         
+    # スマホで見やすいように2列でボタンを並べる
+    cols = st.columns(2)
+    for i, ch in enumerate(display_channels):
+        with cols[i % 2]:
+            is_selected = (ch == st.session_state.selected_channel)
+            b_type = "primary" if is_selected else "secondary"
+            if st.button(ch, key=f"btn_{i}", use_container_width=True, type=b_type):
+                st.session_state.selected_channel = ch
+                st.rerun()
+
+    current_ch = st.session_state.selected_channel
+    st.divider()
+    
     try:
         service = get_drive_service()
-        files = get_recent_files(service, max_results=15)
+        files = get_recent_files(service, max_results=300)
         
         if not files:
-            st.info("保存された要約がまだありません。")
+            st.info("ドライブに保存された要約がまだありません。")
         else:
-            # 選択肢用の辞書作成（ファイル名 -> ファイルID）
-            file_options = {f['name']: f['id'] for f in files}
+            # 選択されたボタンに応じて、表示するファイルを絞り込む
+            if current_ch == "その他（手動要約など）":
+                target_files = []
+                for f in files:
+                    is_other = True
+                    for bc in base_channels:
+                        if f"_{bc}_" in f['name']:
+                            is_other = False
+                            break
+                    if is_other:
+                        target_files.append(f)
+            else:
+                target_files = [f for f in files if f"_{current_ch}_" in f['name']]
             
-            # ドロップダウンリストでファイルを選択
-            selected_file_name = st.selectbox("確認したいファイルを選択してください", list(file_options.keys()))
-            
-            if selected_file_name:
-                file_id = file_options[selected_file_name]
-                with st.spinner("要約内容を読み込み中..."):
-                    content = read_file_content(service, file_id)
+            if not target_files:
+                st.info(f"「{current_ch}」の要約はまだありません。")
+            else:
+                st.markdown(f"#### 📄 「{current_ch}」の要約一覧")
+                file_options = {f['name'].split('_', 2)[-1].replace('.txt', ''): f['id'] for f in target_files}
                 
-                # スクロール可能なテキストエリアで内容を表示
-                st.text_area("テキスト内容", content, height=500)
+                selected_file_name = st.selectbox("確認したい動画を選択してください", list(file_options.keys()))
+                
+                if selected_file_name:
+                    file_id = file_options[selected_file_name]
+                    with st.spinner("要約内容を読み込み中..."):
+                        content = read_file_content(service, file_id)
+                    
+                    st.text_area("要約テキスト", content, height=500)
                 
     except Exception as e:
         st.error(f"履歴の取得に失敗しました: {e}")
