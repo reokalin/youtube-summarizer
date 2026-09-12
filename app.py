@@ -37,7 +37,6 @@ def get_drive_instance():
     return GoogleDrive(gauth)
 
 def clean_youtube_url(url):
-    # ショート動画や通常の動画URLから純粋な動画URLを抽出
     match = re.search(r'(?:v=|\/|shorts\/)([0-9A-Za-z_-]{11})', url)
     if match:
         video_id = match.group(1)
@@ -54,13 +53,12 @@ if st.button("要約してGoogleドライブへ保存", type="primary", use_cont
         if not video_id:
             st.error("有効なYouTube URLではありません。")
         else:
-            with st.spinner("1. Gemini 3.6 が動画コンテンツを直接解析中..."):
+            with st.spinner("1. Gemini 3.6 が動画コンテンツを解析中..."):
                 try:
                     client = genai.Client(api_key=GEMINI_API_KEY)
                     
-                    # Geminiに直接YouTube URLを渡して要約させるプロンプト
                     prompt = f"""
-以下のYouTube動画のコンテンツ（音声・字幕・映像）を正確に理解し、わかりやすく要約してください。
+以下のYouTube動画のコンテンツを正確に理解し、わかりやすく要約してください。
 
 【対象動画URL】
 {clean_url}
@@ -92,14 +90,18 @@ if st.button("要約してGoogleドライブへ保存", type="primary", use_cont
                     file_name = f"summary_{video_id}.txt"
                     file_content = f"URL: {clean_url}\n\n====================\n【AI要約結果】\n====================\n\n{summary_result}"
 
+                    # サービスアカウント容量制限を回避するためのファイル作成パラメータ
                     file_metadata = {
                         'title': file_name,
                         'mimeType': 'text/plain',
                         'parents': [{'id': GOOGLE_DRIVE_FOLDER_ID}]
                     }
+                    
                     drive_file = drive.CreateFile(file_metadata)
                     drive_file.SetContentString(file_content)
-                    drive_file.Upload()
+                    
+                    # paramを指定してアップロードを実行（親フォルダ側の所有権を利用）
+                    drive_file.Upload(param={'supportsAllDrives': True, 'supportsTeamDrives': True})
                     
                     st.success("🎉 要約が完了し、Googleドライブへの保存が成功しました！")
                     st.markdown(summary_result)
