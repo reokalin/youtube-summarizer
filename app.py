@@ -17,21 +17,18 @@ st.set_page_config(page_title="YouTube Summarizer", page_icon="🎬", layout="ce
 # スマホ向けUI最適化（CSS）
 st.markdown("""
 <style>
-    /* 画面の上下左右の余白を減らす */
     .block-container {
         padding-top: 2rem !important;
         padding-bottom: 2rem !important;
         padding-left: 1rem !important;
         padding-right: 1rem !important;
     }
-    /* ボタンを大きく押しやすく */
     .stButton>button {
         height: 3.5rem;
         font-size: 1.1rem;
         font-weight: bold;
         border-radius: 8px;
     }
-    /* 入力フォームの文字を少し大きく */
     input {
         font-size: 1.05rem !important;
     }
@@ -49,7 +46,7 @@ try:
     CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
     CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
     REFRESH_TOKEN = st.secrets["GOOGLE_REFRESH_TOKEN"]
-except Exception as e:
+except Exception:
     st.error("設定情報（Secrets）が見つかりません。")
     st.stop()
 
@@ -69,7 +66,6 @@ def extract_video_id(url):
     return match.group(1) if match else None
 
 def get_video_metadata(video_url):
-    """YouTubeのOEmbed APIを利用してタイトルとチャンネル名を取得"""
     oembed_url = f"https://www.youtube.com/oembed?url={video_url}&format=json"
     try:
         with urllib.request.urlopen(oembed_url) as response:
@@ -114,7 +110,7 @@ if st.button("🚀 要約してGoogleドライブへ保存", type="primary", use
             except Exception:
                 pass 
 
-            # 2. Gemini要約 (gemini-1.5-flash に統一)
+            # 2. Gemini要約 (gemini-1.5-flash)
             status_text.info("🧠 Gemini 1.5 Flash が内容を解析・要約中...")
             try:
                 client = genai.Client(api_key=GEMINI_API_KEY)
