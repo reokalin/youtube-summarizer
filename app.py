@@ -2,6 +2,8 @@ import os
 import re
 import json
 import streamlit as st
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.formatters import TextFormatter
 from google import genai
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -10,7 +12,7 @@ from googleapiclient.http import MediaInMemoryUpload
 st.set_page_config(page_title="YouTube Summarizer", page_icon="🎬", layout="centered")
 
 st.title("🎬 YouTube AI Summarizer")
-st.caption("URLを入力すると、Gemini 3.6が動画を直接解析して要約し、Googleドライブへ保存します。")
+st.caption("URLを入力すると、Gemini 3.6が要約してGoogleドライブへ直接保存します。")
 
 # Secrets情報の読み込み
 try:
@@ -34,12 +36,9 @@ def get_drive_service():
     )
     return build('drive', 'v3', credentials=creds)
 
-def clean_youtube_url(url):
+def extract_video_id(url):
     match = re.search(r'(?:v=|\/|shorts\/)([0-9A-Za-z_-]{11})', url)
-    if match:
-        video_id = match.group(1)
-        return video_id, f"https://www.youtube.com/watch?v={video_id}"
-    return None, None
+    return match.group(1) if match else None
 
 video_url_input = st.text_input("YouTube動画URLを入力", placeholder="https://www.youtube.com/watch?v=...")
 
@@ -47,19 +46,35 @@ if st.button("要約してGoogleドライブへ保存", type="primary", use_cont
     if not video_url_input:
         st.warning("URLを入力してください。")
     else:
-        video_id, clean_url = clean_youtube_url(video_url_input)
+        video_id = extract_video_id(video_url_input)
         if not video_id:
             st.error("有効なYouTube URLではありません。")
         else:
-            with st.spinner("1. Gemini 3.6 が動画コンテンツを解析中..."):
+            # 1. 字幕取得
+            with st.spinner("1. 動画の字幕・文字起こしデータを取得中..."):
+                transcript_text = ""
+                try:
+                    # 日本語または英語の字幕を取得
+                    fetched = YouTubeTranscriptApi.get_transcript(video_id, languages=['ja', 'en'])
+                    formatter = TextFormatter()
+                    transcript_text = formatter.format_transcript(fetched)
+                except Exception as e:
+                    st.error(f"字幕データの取得に失敗しました。字幕が無効な動画の可能性があります: {e}")
+                    st.stop()
+
+            # 2. Gemini要約
+            with st.spinner("2. Gemini 3.6 が文字起こしテキストを解析中..."):
                 try:
                     client = genai.Client(api_key=GEMINI_API_KEY)
                     
                     prompt = f"""
-以下のYouTube動画のコンテンツを正確に理解し、わかりやすく要約してください。
+以下のYouTube動画の文字起こしテキストを読み、わかりやすく要約してください。
 
 【対象動画URL】
-{clean_url}
+https://www.youtube.com/watch?v={video_id}
+
+【文字起こしテキスト】
+{transcript_text[:30000]}
 
 【出力フォーマット】
 ■ 動画概要（3行で要約）
@@ -82,11 +97,12 @@ if st.button("要約してGoogleドライブへ保存", type="primary", use_cont
                     st.error(f"Gemini API 解析エラー: {e}")
                     st.stop()
 
-            with st.spinner("2. Googleドライブへ保存中..."):
+            # 3. Googleドライブ保存
+            with st.spinner("3. Googleドライブへ保存中..."):
                 try:
                     service = get_drive_service()
                     file_name = f"summary_{video_id}.txt"
-                    file_content = f"URL: {clean_url}\n\n====================\n【AI要約結果】\n====================\n\n{summary_result}"
+                    file_content = f"URL: https://www.youtube.com/watch?v={video_id}\n\n====================\n【AI要約結果】\n====================\n\n{summary_result}"
 
                     file_metadata = {
                         'name': file_name,
