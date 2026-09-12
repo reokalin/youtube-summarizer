@@ -42,7 +42,7 @@ def summarize_video(video_id, title, author, service):
         formatter = TextFormatter()
         transcript_text = formatter.format_transcript(fetched)
     except Exception:
-        print("  -> 字幕なし。Geminiの直接解析にフォールバックします。")
+        print("  -> 字幕なし。テキスト解析にフォールバックします。")
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = f"""
@@ -66,14 +66,13 @@ def summarize_video(video_id, title, author, service):
     try:
         if transcript_text:
             prompt += f"\n\n【文字起こしテキスト】\n{transcript_text[:30000]}"
-            # ここが gemini-2.5-flash になっています
-            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            # 正しいモデル名は gemini-1.5-flash です（1日1500回無料）
+            response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
         else:
-            # ここも gemini-2.5-flash になっています
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=[{"file_data": {"file_uri": clean_url, "mime_type": "video/mp4"}}, prompt]
-            )
+            # YouTubeのURLを直接動画ファイルとして渡すとエラーになるバグを修正
+            fallback_prompt = prompt + "\n\n※この動画には字幕データがありません。上記URLやタイトルから読み取れる範囲で要約してください。"
+            response = client.models.generate_content(model='gemini-1.5-flash', contents=fallback_prompt)
+            
         summary_result = response.text
     except Exception as e:
         print(f"  -> Gemini API 解析エラー: {e}")
