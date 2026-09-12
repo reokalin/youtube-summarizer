@@ -1,12 +1,11 @@
 import os
 import re
 import json
-import tempfile
 import streamlit as st
 from google import genai
-from pydrive2.auth import GoogleAuth
-from pydrive2.drive import GoogleDrive
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaInMemoryUpload
 
 st.set_page_config(page_title="YouTube Summarizer", page_icon="🎬", layout="centered")
 
@@ -17,24 +16,23 @@ st.caption("URLを入力すると、Gemini 3.6が動画を直接解析して要�
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     GOOGLE_DRIVE_FOLDER_ID = st.secrets["GOOGLE_DRIVE_FOLDER_ID"]
-    SA_JSON_STR = st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"]
+    CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
+    CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
+    REFRESH_TOKEN = st.secrets["GOOGLE_REFRESH_TOKEN"]
 except Exception as e:
     st.error("設定情報（Secrets）が見つかりません。Streamlitの設定を行ってください。")
     st.stop()
 
-def get_drive_instance():
-    gauth = GoogleAuth()
-    scope = ["https://www.googleapis.com/auth/drive"]
-    
-    sa_info = json.loads(SA_JSON_STR)
-    
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
-        json.dump(sa_info, f)
-        temp_json_path = f.name
-
-    gauth.service_account_file = temp_json_path
-    gauth.credentials = ServiceAccountCredentials.from_json_keyfile_name(temp_json_path, scope)
-    return GoogleDrive(gauth)
+def get_drive_service():
+    creds = Credentials(
+        token=None,
+        refresh_token=REFRESH_TOKEN,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+        scopes=["https://www.googleapis.com/auth/drive.file"]
+    )
+    return build('drive', 'v3', credentials=creds)
 
 def clean_youtube_url(url):
     match = re.search(r'(?:v=|\/|shorts\/)([0-9A-Za-z_-]{11})', url)
@@ -86,22 +84,21 @@ if st.button("要約してGoogleドライブへ保存", type="primary", use_cont
 
             with st.spinner("2. Googleドライブへ保存中..."):
                 try:
-                    drive = get_drive_instance()
+                    service = get_drive_service()
                     file_name = f"summary_{video_id}.txt"
                     file_content = f"URL: {clean_url}\n\n====================\n【AI要約結果】\n====================\n\n{summary_result}"
 
-                    # サービスアカウント容量制限を回避するためのファイル作成パラメータ
                     file_metadata = {
-                        'title': file_name,
-                        'mimeType': 'text/plain',
-                        'parents': [{'id': GOOGLE_DRIVE_FOLDER_ID}]
+                        'name': file_name,
+                        'parents': [GOOGLE_DRIVE_FOLDER_ID]
                     }
+                    media = MediaInMemoryUpload(file_content.encode('utf-8'), mimetype='text/plain')
                     
-                    drive_file = drive.CreateFile(file_metadata)
-                    drive_file.SetContentString(file_content)
-                    
-                    # paramを指定してアップロードを実行（親フォルダ側の所有権を利用）
-                    drive_file.Upload(param={'supportsAllDrives': True, 'supportsTeamDrives': True})
+                    uploaded_file = service.files().create(
+                        body=file_metadata,
+                        media_body=media,
+                        fields='id'
+                    ).execute()
                     
                     st.success("🎉 要約が完了し、Googleドライブへの保存が成功しました！")
                     st.markdown(summary_result)
