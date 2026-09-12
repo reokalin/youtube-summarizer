@@ -1,4 +1,6 @@
 streamlit
 google-genai
 youtube-transcript-api
-pydrive2
+google-api-python-client
+google-auth
+feedparser
